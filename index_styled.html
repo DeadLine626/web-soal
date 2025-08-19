@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Quiz 10 Soal – Pembuat & Penjawab</title>
+  <link rel="stylesheet" href="styles.css"/>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h1>Quiz 10 Soal – Pembuat & Penjawab</h1>
+    <div class="muted">Buat kuis (10 soal, masing-masing 10 poin), kirim link ke teman untuk menjawab, tiap soal ada timer. Hasil bisa dikirim ke Google Spreadsheet atau diunduh CSV.</div>
+
+    <div id="makerView" class="" >
+      <h2>Mode Pembuat Soal</h2>
+      <div class="row">
+        <div>
+          <label>Judul Kuis</label>
+          <input id="quizTitle" type="text" placeholder="Mis: Latihan Fisika Bab 1"/>
+        </div>
+        <div>
+          <label>Game ID (bebas, untuk identifikasi)</label>
+          <input id="gameId" type="text" placeholder="mis: fisika-kelas11-19aug"/>
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label>Detik per soal (default)</label>
+          <input id="defaultSeconds" type="number" min="5" max="600" value="30"/>
+        </div>
+        <div>
+          <label>Spreadsheet Webhook URL (Apps Script) – opsional</label>
+          <input id="webhook" type="text" placeholder="https://script.google.com/macros/s/…/exec"/>
+        </div>
+      </div>
+
+      <div id="questions"></div>
+
+      <div class="flex" style="margin-top:10px">
+        <button class="btn" id="addQuestion">+ Tambah Soal</button>
+        <span class="pill" id="qCount">0 / 10</span>
+        <button class="btn secondary" id="fillSample">Isi Contoh</button>
+      </div>
+
+      <div class="flex" style="margin-top:16px">
+        <button class="btn good" id="makeLink">Buat Link Penjawab</button>
+        <button class="btn" id="downloadConfig">Unduh .quiz</button>
+        <input type="file" id="uploadConfig" accept=".quiz,.json" class="hidden"/>
+        <button class="btn" id="uploadBtn">Muat .quiz</button>
+      </div>
+
+      <div id="shareBox" class="q-card hidden">
+        <div class="muted">Bagikan link ini ke teman penjawab:</div>
+        <div class="mono" id="shareLink"></div>
+        <div class="muted" style="margin-top:8px">Atau scan QR:</div>
+        <canvas id="qrCanvas" width="220" height="220" style="background:#fff;border-radius:8px"></canvas>
+      </div>
+    </div>
+
+    <div id="playerView" class="hidden">
+      <h2>Mode Penjawab</h2>
+      <div class="row">
+        <div>
+          <label>Nama Penjawab</label>
+          <input id="playerName" type="text" placeholder="Nama kamu"/>
+        </div>
+        <div>
+          <label>Siap mulai?</label>
+          <button class="btn good" id="startBtn">Mulai Kuis</button>
+        </div>
+      </div>
+
+      <div id="liveBox" class="hidden">
+        <div class="flex" style="justify-content:space-between;margin:10px 0">
+          <div><span class="pill" id="titleBadge"></span> <span class="tag" id="gidBadge"></span></div>
+          <div class="pill">Skor: <span id="scoreNow">0</span> / <span id="scoreMax">100</span></div>
+        </div>
+
+        <div class="q-card" id="qArea">
+          <div class="muted">Soal <span id="qIdx">1</span> dari <span id="qTotal">10</span></div>
+          <h2 id="qText" style="margin-top:6px"></h2>
+          <div id="opts"></div>
+          <div class="flex" style="justify-content:space-between;margin-top:12px">
+            <div class="muted">Sisa waktu: <b id="timeLeft">--</b>s</div>
+            <div class="progress" style="flex:1;margin-left:10px"><div id="bar"></div></div>
+          </div>
+        </div>
+
+        <div class="flex" style="justify-content:space-between">
+          <button class="btn" id="prevBtn">⟵ Sebelumnya</button>
+          <button class="btn" id="nextBtn">Berikutnya ⟶</button>
+        </div>
+      </div>
+
+      <div id="doneBox" class="hidden center">
+        <h2>Selesai!</h2>
+        <p>Total skor kamu: <b id="finalScore">0</b> / <b>100</b></p>
+        <div class="flex center" style="justify-content:center">
+          <button class="btn good" id="sendSheetBtn">Kirim ke Spreadsheet</button>
+          <button class="btn" id="downloadCsvBtn">Unduh CSV</button>
+          <button class="btn secondary" id="restartBtn">Ulangi</button>
+        </div>
+        <div class="footer">Jika pengiriman ke spreadsheet diaktifkan oleh pembuat, datamu akan tersimpan otomatis. Tombol di atas mengirim ulang secara manual bila perlu.</div>
+      </div>
+    </div>
+
+    <div class="footer">Dibuat untuk kebutuhan cepat: kelas, latihan, atau fun quiz. Semua berjalan di browser (client‑side). 🔒</div>
+  </div>
+</div>
+
+<script>
+/* (JS sama seperti sebelumnya — dipersingkat sedikit di sini) */
+const $ = sel => document.querySelector(sel);
+const el = (t,a={},...k)=>{const n=document.createElement(t);for(const x in a){if(x==='class')n.className=a[x];else if(x==='html')n.innerHTML=a[x];else if(x.startsWith('on'))n[x]=a[x];else n.setAttribute(x,a[x]);}k.forEach(c=>{if(typeof c==='string')n.appendChild(document.createTextNode(c));else if(c)n.appendChild(c)});return n;};
+function b64enc(s){return btoa(unescape(encodeURIComponent(s)));}
+function b64dec(s){return decodeURIComponent(escape(atob(s)));}
+function uid(){return Math.random().toString(36).slice(2,10)}
+
+let makerState={quizTitle:'',gameId:'',defaultSeconds:30,webhook:'',questions:[]};
+let playerState={quiz:null,answers:[],current:0,score:0,startMs:0,spentPerQ:[],timer:null,remain:0};
+
+async function drawQR(canvas, text){
+  try{
+    const url='https://chart.googleapis.com/chart?cht=qr&chs=220x220&chl='+encodeURIComponent(text);
+    const img=new Image(); img.crossOrigin='anonymous';
+    img.onload=()=>{const ctx=canvas.getContext('2d');ctx.clearRect(0,0,canvas.width,canvas.height);ctx.drawImage(img,0,0,canvas.width,canvas.height)};
+    img.src=url;
+  }catch(e){}
+}
+
+const qWrap=$('#questions'); const qCount=$('#qCount');
+
+function renderQ(i,q){
+  const card=el('div',{class:'q-card'});
+  card.append(
+    el('div',{class:'flex',style:'justify-content:space-between'},
+      el('div',{class:'pill'},`Soal #${i+1}`),
+      el('button',{class:'btn bad',onclick:()=>{makerState.questions.splice(i,1);refreshQs();}},'Hapus')
+    ),
+    el('label',{},'Teks Soal'),
+    el('textarea',{oninput:e=>{q.text=e.target.value}},q.text||''),
+    el('div',{class:'row'},
+      el('div',{},el('label',{},'Opsi A'),el('input',{type:'text',value:q.a||'',oninput:e=>q.a=e.target.value})),
+      el('div',{},el('label',{},'Opsi B'),el('input',{type:'text',value:q.b||'',oninput:e=>q.b=e.target.value}))),
+    el('div',{class:'row'},
+      el('div',{},el('label',{},'Opsi C'),el('input',{type:'text',value:q.c||'',oninput:e=>q.c=e.target.value})),
+      el('div',{},el('label',{},'Opsi D'),el('input',{type:'text',value:q.d||'',oninput:e=>q.d=e.target.value}))),
+    el('div',{class:'row'},
+      el('div',{},el('label',{},'Jawaban Benar (A/B/C/D)'),el('input',{type:'text',value:q.correct||'',maxlength:1,oninput:e=>q.correct=(e.target.value||'').toUpperCase()})),
+      el('div',{},el('label',{},'Detik untuk soal ini (opsional)'),el('input',{type:'number',min:5,max:600,value:q.seconds||'',oninput:e=>q.seconds=Number(e.target.value)||null})) )
+  ); return card;
+}
+
+function refreshQs(){ qWrap.innerHTML=''; makerState.questions.forEach((q,i)=>qWrap.appendChild(renderQ(i,q))); qCount.textContent=`${makerState.questions.length} / 10`; }
+$('#addQuestion').onclick=()=>{ if(makerState.questions.length>=10){alert('Maksimal 10 soal.');return;} makerState.questions.push({text:'',a:'',b:'',c:'',d:'',correct:'',seconds:null}); refreshQs(); };
+$('#fillSample').onclick=()=>{
+  const samp=[
+    {text:'Ibukota Indonesia adalah…',a:'Bandung',b:'Jakarta',c:'Surabaya',d:'Medan',correct:'B',seconds:15},
+    {text:'2 + 3 × 4 = ?',a:'14',b:'20',c:'24',d:'18',correct:'A',seconds:20},
+    {text:'Simbol kimia untuk Natrium?',a:'Na',b:'N',c:'No',d:'Ns',correct:'A'},
+    {text:'Bahasa pemrograman untuk web di browser?',a:'Python',b:'Java',c:'JavaScript',d:'C',correct:'C'},
+    {text:'Planet terdekat dari Matahari?',a:'Merkurius',b:'Venus',c:'Bumi',d:'Mars',correct:'A'},
+    {text:'Hasil 9²?',a:'18',b:'72',c:'81',d:'99',correct:'C'},
+    {text:'Warna bendera Indonesia?',a:'Merah–Putih',b:'Biru–Putih',c:'Hijau–Putih',d:'Merah–Biru',correct:'A'},
+    {text:'Bahasa nasional Indonesia?',a:'Sunda',b:'Melayu',c:'Indonesia',d:'Jawa',correct:'C'},
+    {text:'Tekanan udara diukur dengan?',a:'Termometer',b:'Altimeter',c:'Barometer',d:'Higrometer',correct:'C'},
+    {text:'CPU adalah singkatan dari…',a:'Central Processing Unit',b:'Computer Personal Unit',c:'Core Parallel Unit',d:'Central Program Unit',correct:'A'}
+  ]; makerState.questions=samp; refreshQs(); $('#quizTitle').value='Kuis Contoh 10 Soal'; $('#gameId').value='contoh-'+uid();
+};
+$('#makeLink').onclick=()=>{
+  makerState.quizTitle=$('#quizTitle').value.trim()||'Kuis Tanpa Judul';
+  makerState.gameId=$('#gameId').value.trim()||('game-'+uid());
+  makerState.defaultSeconds=Number($('#defaultSeconds').value)||30;
+  makerState.webhook=$('#webhook').value.trim();
+  if(makerState.questions.length!==10) return alert('Harus tepat 10 soal.');
+  for(const [i,q] of makerState.questions.entries()){ if(!q.text||!q.a||!q.b||!q.c||!q.d||!q.correct) return alert(`Lengkapi soal #${i+1}.`); }
+  const data={title:makerState.quizTitle,gameId:makerState.gameId,webhook:makerState.webhook,defaultSec:makerState.defaultSeconds,pointsPerQ:10,questions:makerState.questions};
+  const blob=b64enc(JSON.stringify(data)); const link=location.origin+location.pathname+'#data='+blob;
+  $('#shareLink').textContent=link; $('#shareBox').classList.remove('hidden'); drawQR($('#qrCanvas'),link);
+};
+$('#downloadConfig').onclick=()=>{
+  const data={ title:$('#quizTitle').value.trim()||'Kuis', gameId:$('#gameId').value.trim()||('game-'+uid()), webhook:$('#webhook').value.trim(), defaultSec:Number($('#defaultSeconds').value)||30, pointsPerQ:10, questions:makerState.questions };
+  const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
+  const a=el('a',{href:URL.createObjectURL(blob),download:(data.title.replace(/\s+/g,'_')+'.quiz')}); document.body.appendChild(a); a.click(); a.remove();
+};
+$('#uploadBtn').onclick=()=>$('#uploadConfig').click();
+$('#uploadConfig').onchange=(e)=>{const f=e.target.files[0]; if(!f) return; const r=new FileReader(); r.onload=()=>{ try{const conf=JSON.parse(r.result); loadPlayerFromConfig(conf);}catch(err){alert('File tidak valid.');} }; r.readAsText(f);};
+
+const playerView=$('#playerView'); const makerView=$('#makerView');
+function loadPlayerFromConfig(conf){
+  playerState.quiz=conf; $('#titleBadge').textContent=conf.title; $('#gidBadge').textContent=conf.gameId?('ID: '+conf.gameId):'';
+  $('#scoreMax').textContent=(conf.pointsPerQ||10)*(conf.questions?.length||10); $('#qTotal').textContent=conf.questions.length;
+  makerView.classList.add('hidden'); playerView.classList.remove('hidden');
+}
+function tryLoadFromHash(){ const h=location.hash||''; if(h.startsWith('#data=')){ const json=b64dec(h.slice(6)); const conf=JSON.parse(json); loadPlayerFromConfig(conf); } } tryLoadFromHash();
+
+$('#startBtn').onclick=()=>{
+  const nm=$('#playerName').value.trim(); if(!nm) return alert('Isi nama dulu.');
+  playerState.answers=new Array(playerState.quiz.questions.length).fill(null);
+  playerState.spentPerQ=new Array(playerState.quiz.questions.length).fill(0);
+  playerState.current=0; playerState.score=0; playerState.startMs=Date.now();
+  $('#liveBox').classList.remove('hidden'); $('#doneBox').classList.add('hidden'); showQuestion(0,true);
+};
+$('#prevBtn').onclick=()=>{ if(playerState.current>0) showQuestion(playerState.current-1,false) };
+$('#nextBtn').onclick=()=>{ if(playerState.current<playerState.quiz.questions.length-1) showQuestion(playerState.current+1,true); else finishQuiz(); };
+
+function showQuestion(idx,forward){
+  const q=playerState.quiz.questions[idx]; playerState.current=idx;
+  $('#qIdx').textContent=(idx+1); $('#qText').textContent=q.text;
+  const opts=$('#opts'); opts.innerHTML=''; const L=['A','B','C','D'];
+  [q.a,q.b,q.c,q.d].forEach((txt,i)=>{ const wrap=el('label',{class:'opt'}); const radio=el('input',{type:'radio',name:'opt',value:L[i]}); radio.onchange=()=>selectAnswer(L[i]); if(playerState.answers[idx]?.choice===L[i]) radio.checked=true; wrap.append(radio,el('div',{},`${L[i]}. ${txt}`)); opts.appendChild(wrap); });
+  if(playerState.timer) clearInterval(playerState.timer);
+  const total=q.seconds||playerState.quiz.defaultSec||30; let remain=total;
+  if(playerState.answers[idx]?.locked){ remain=playerState.answers[idx].remainAtLock||0; }
+  else if(playerState.answers[idx]?.remainSnapshot!=null && !forward){ remain=playerState.answers[idx].remainSnapshot; }
+  updateBar(remain,total); $('#timeLeft').textContent=remain; playerState.remain=remain;
+  playerState.timer=setInterval(()=>{
+    if(playerState.answers[idx]?.locked){ clearInterval(playerState.timer); return; }
+    playerState.remain--; $('#timeLeft').textContent=playerState.remain; updateBar(playerState.remain,total); playerState.spentPerQ[idx]++;
+    if(playerState.remain<=0){ lockAnswer(idx,null); autoNext(); } else { playerState.answers[idx]=playerState.answers[idx]||{}; playerState.answers[idx].remainSnapshot=playerState.remain; }
+  },1000);
+}
+function updateBar(remain,total){ $('#bar').style.width=(Math.max(0,(remain/total)*100))+'%'; }
+function selectAnswer(letter){ const idx=playerState.current; if(playerState.answers[idx]?.locked) return; playerState.answers[idx]=Object.assign({},playerState.answers[idx]||{},{choice:letter,locked:false}); }
+function lockAnswer(idx,forced){ const q=playerState.quiz.questions[idx]; const choice=(forced!==undefined)?forced:(playerState.answers[idx]?.choice??null); const total=q.seconds||playerState.quiz.defaultSec||30; const remainAtLock=Math.max(0,playerState.remain|0);
+  playerState.answers[idx]={choice,locked:true,remainAtLock}; if(choice && choice===q.correct){ playerState.score+=(playerState.quiz.pointsPerQ||10); } $('#scoreNow').textContent=playerState.score; clearInterval(playerState.timer);
+}
+function autoNext(){ if(playerState.current<playerState.quiz.questions.length-1){ showQuestion(playerState.current+1,true); } else { finishQuiz(); } }
+function finishQuiz(){
+  for(let i=0;i<playerState.quiz.questions.length;i++){ if(!playerState.answers[i]?.locked){ const prev=playerState.current; playerState.current=i; lockAnswer(i,playerState.answers[i]?.choice??null); playerState.current=prev; } }
+  $('#finalScore').textContent=playerState.score; $('#liveBox').classList.add('hidden'); $('#doneBox').classList.remove('hidden'); if(playerState.quiz.webhook){ sendToWebhook().catch(()=>{}); }
+}
+function buildPayload(){
+  const durationSec=Math.round((Date.now()-playerState.startMs)/1000);
+  return { quizTitle:playerState.quiz.title, gameId:playerState.quiz.gameId||'', playerName:$('#playerName').value.trim(),
+    totalScore:playerState.score, maxScore:(playerState.quiz.pointsPerQ||10)*playerState.quiz.questions.length, durationSec,
+    answers: playerState.quiz.questions.map((q,i)=>({ index:i+1, question:q.text, selected:playerState.answers[i]?.choice??null, correct:q.correct, seconds:q.seconds||playerState.quiz.defaultSec||30, spent:playerState.spentPerQ[i]||0, isCorrect:(playerState.answers[i]?.choice??null)===q.correct })) };
+}
+async function sendToWebhook(){ const url=playerState.quiz.webhook; if(!url){ alert('Webhook belum diisi oleh pembuat.'); return; } const payload=buildPayload(); await fetch(url,{method:'POST',mode:'no-cors',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)}); alert('Dikirim ke Spreadsheet.'); }
+function downloadCSV(){
+  const p=buildPayload(); const header=['Index','Question','Selected','Correct','Seconds','Spent','IsCorrect']; const rows=p.answers.map(a=>[a.index,`"${(a.question||'').replace(/"/g,'""')}"`,a.selected||'',a.correct||'',a.seconds,a.spent,a.isCorrect]);
+  const headLine='QuizTitle,GameId,PlayerName,TotalScore,MaxScore,DurationSec\n';
+  const meta=[p.quizTitle,p.gameId,p.playerName,p.totalScore,p.maxScore,p.durationSec].map(x=>`"${String(x).replace(/"/g,'""')}"`).join(',')+'\\n\\n';
+  const csv=headLine+meta+header.join(',')+'\\n'+rows.map(r=>r.join(',')).join('\\n');
+  const a=el('a',{href:URL.createObjectURL(new Blob([csv],{type:'text/csv'})),download:'quiz_results.csv'}); document.body.appendChild(a); a.click(); a.remove();
+}
+$('#sendSheetBtn').onclick=()=>sendToWebhook();
+$('#downloadCsvBtn').onclick=()=>downloadCSV();
+$('#restartBtn').onclick=()=>location.reload();
+</script>
+</body>
+</html>
